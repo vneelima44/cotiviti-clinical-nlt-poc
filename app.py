@@ -17,25 +17,32 @@ st.caption("Cotiviti Intern Assessment | Topic 1: Clinical Natural Language Tech
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("⚙️ Configuration")
-    openai_key = st.text_input("OpenAI API Key", type="password",
-                               help="Required for ICD-10 suggestions")
+    openai_key = st.text_input(
+        "OpenAI API Key", type="password",
+        help="Required for ICD-10 suggestions"
+    )
     st.markdown("---")
     st.markdown("**Tech Stack**")
-    st.markdown("- spaCy + SciSpaCy (Biomedical NER)\n"
-                "- OpenAI GPT-3.5-turbo (ICD coding)\n"
-                "- Streamlit (UI)")
+    st.markdown(
+        "- spaCy en_core_web_sm (NER)\n"
+        "- OpenAI GPT-3.5-turbo (ICD coding)\n"
+        "- Streamlit (UI)"
+    )
     st.markdown("---")
     st.markdown("**About**")
     st.markdown(
         "This POC demonstrates two core clinical NLT capabilities directly relevant to "
-        "Cotiviti's Payment Accuracy and Risk Adjustment services: biomedical named entity "
-        "recognition from clinical notes, and AI-assisted ICD-10 coding with "
-        "evidence-grounded justifications."
+        "Cotiviti's Payment Accuracy and Risk Adjustment services: named entity recognition "
+        "from clinical notes, and AI-assisted ICD-10 coding with evidence-grounded justifications."
     )
     st.markdown("---")
     st.markdown("**Relevant Cotiviti Services**")
-    st.markdown("- Coding Validation\n- Clinical Chart Validation\n"
-                "- Medical Record Coding\n- Risk Adjustment")
+    st.markdown(
+        "- Coding Validation\n"
+        "- Clinical Chart Validation\n"
+        "- Medical Record Coding\n"
+        "- Risk Adjustment"
+    )
 
 # ── Sample note ────────────────────────────────────────────────────────────────
 SAMPLE_NOTE = (
@@ -68,7 +75,7 @@ run = st.button("🔬 Analyze Note", type="primary", use_container_width=True)
 @st.cache_resource
 def load_nlp_model():
     try:
-        return spacy.load("en_core_sci_sm")
+        return spacy.load("en_core_web_sm")
     except OSError:
         return None
 
@@ -77,7 +84,7 @@ def extract_entities(text):
     if nlp is None:
         return []
     doc = nlp(text)
-    return [(ent.text, ent.label_) for ent in doc.ents]
+    return [(ent.text, ent.label_, spacy.explain(ent.label_) or ent.label_) for ent in doc.ents]
 
 # ── ICD suggestion ─────────────────────────────────────────────────────────────
 def suggest_icd_codes(note_text, api_key):
@@ -100,61 +107,95 @@ def suggest_icd_codes(note_text, api_key):
     )
     return response.choices[0].message.content
 
+# ── Label color map ────────────────────────────────────────────────────────────
+LABEL_COLORS = {
+    "PERSON": "#c0392b",
+    "ORG": "#8e44ad",
+    "GPE": "#2980b9",
+    "DATE": "#27ae60",
+    "TIME": "#16a085",
+    "CARDINAL": "#d35400",
+    "QUANTITY": "#f39c12",
+    "NORP": "#1abc9c",
+    "FAC": "#2c3e50",
+    "LOC": "#2ecc71",
+    "PRODUCT": "#e67e22",
+    "EVENT": "#e74c3c",
+    "WORK_OF_ART": "#9b59b6",
+    "LAW": "#34495e",
+    "LANGUAGE": "#1abc9c",
+    "PERCENT": "#f1c40f",
+    "MONEY": "#2ecc71",
+    "ORDINAL": "#95a5a6",
+    "MISC": "#7f8c8d",
+}
+
+def get_color(label):
+    return LABEL_COLORS.get(label, "#1f4e79")
+
 # ── Main output ────────────────────────────────────────────────────────────────
 if run and note.strip():
     tab1, tab2 = st.tabs(
-        ["🔍 Named Entity Recognition (SciSpaCy)", "🏷️ ICD-10 Code Suggestions (LLM)"]
+        ["🔍 Named Entity Recognition (spaCy)", "🏷️ ICD-10 Code Suggestions (LLM)"]
     )
 
     with tab1:
-        st.markdown("### Biomedical Entity Extraction")
+        st.markdown("### Clinical Named Entity Recognition")
         st.caption(
-            "Using SciSpaCy en_core_sci_sm — a biomedical NLP model trained on PubMed and clinical text."
+            "Using spaCy en_core_web_sm to identify and label named entities in clinical text. "
+            "In production, a biomedical model (SciSpaCy en_core_sci_lg) would be used for "
+            "richer clinical entity extraction."
         )
-        with st.spinner("Extracting clinical entities..."):
+        with st.spinner("Extracting entities..."):
             entities = extract_entities(note)
 
         if entities:
-            st.markdown("**Identified Clinical Concepts:**")
+            st.markdown("**Identified Entities:**")
             tag_html = ""
-            for ent_text, label in entities:
+            seen = set()
+            for ent_text, label, explanation in entities:
+                key = (ent_text.lower(), label)
+                if key in seen:
+                    continue
+                seen.add(key)
+                color = get_color(label)
                 tag_html += (
-                    f'<span style="background:#1f4e79;color:white;padding:4px 10px;'
+                    f'<span style="background:{color};color:white;padding:4px 10px;'
                     f'border-radius:14px;margin:3px;display:inline-block;font-size:13px">'
                     f'<b>{ent_text}</b>'
-                    f'<span style="opacity:0.7;font-size:11px"> [{label}]</span></span>'
+                    f'<span style="opacity:0.8;font-size:11px"> [{label}]</span></span>'
                 )
             st.markdown(tag_html, unsafe_allow_html=True)
             st.markdown("")
+
             with st.expander("📊 View as Table"):
-                df = pd.DataFrame(entities, columns=["Entity", "Label"])
+                df = pd.DataFrame(
+                    [(e[0], e[1], e[2]) for e in entities],
+                    columns=["Entity", "Label", "Description"]
+                )
                 st.dataframe(df, use_container_width=True)
+
             st.info(
-                f"✅ Extracted **{len(entities)} clinical entities**. "
-                "In a Cotiviti production pipeline, these entities would be mapped to "
-                "SNOMED CT, RxNorm, and LOINC ontology codes for downstream payment "
-                "accuracy analytics."
+                f"✅ Extracted **{len(entities)} entity mentions** from the clinical note. "
+                "In a Cotiviti production pipeline, these entities would be normalized against "
+                "SNOMED CT, RxNorm, and LOINC ontologies and fed into payment accuracy analytics."
             )
         else:
-            if load_nlp_model() is None:
-                st.error(
-                    "SciSpaCy model not installed. The app is running in demo mode. "
-                    "See the ICD-10 tab for a full demonstration."
-                )
+            nlp = load_nlp_model()
+            if nlp is None:
+                st.error("NLP model could not be loaded. Please check deployment logs.")
             else:
                 st.warning("No entities found. Try loading the sample note.")
 
     with tab2:
         st.markdown("### AI-Assisted ICD-10-CM Coding")
         st.caption(
-            "Simulating Cotiviti's Coding Validation workflow using GPT-3.5-turbo "
-            "with a clinical coding system prompt."
+            "Simulating Cotiviti's Coding Validation workflow: an LLM suggests diagnosis codes "
+            "with evidence-grounded justifications for human reviewer approval."
         )
         if not openai_key:
-            st.warning(
-                "⚠️ Enter your OpenAI API key in the sidebar to enable live ICD-10 suggestions."
-            )
-            st.markdown("**Example output:**")
+            st.warning("⚠️ Enter your OpenAI API key in the sidebar to enable live ICD-10 suggestions.")
+            st.markdown("**Example output (what you would see with an API key):**")
             st.markdown(
                 "**1. I21.19** — ST elevation (STEMI) myocardial infarction involving other "
                 "coronary artery of inferior wall  \n"
@@ -164,11 +205,11 @@ if run and note.strip():
                 "*Justification: Patient has documented history of hypertension.*\n\n"
                 "**3. E11.9** — Type 2 diabetes mellitus without complications  \n"
                 "*Justification: History of type 2 diabetes mellitus documented as active comorbidity.*\n\n"
-                "**4. Z79.4** — Long-term (current) use of insulin  \n"
-                "*Justification: Patient is on metformin, indicating active diabetic pharmacotherapy.*"
+                "**4. Z79.899** — Other long-term (current) drug therapy  \n"
+                "*Justification: Patient is on lisinopril and metformin, indicating active chronic pharmacotherapy.*"
             )
         else:
-            with st.spinner("Consulting LLM for ICD-10 codes... (5-10 seconds)"):
+            with st.spinner("Consulting LLM for ICD-10 codes... (5–10 seconds)"):
                 try:
                     icd_result = suggest_icd_codes(note, openai_key)
                     st.markdown(icd_result)
