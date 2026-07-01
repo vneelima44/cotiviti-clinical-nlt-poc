@@ -1,4 +1,6 @@
 import streamlit as st
+import subprocess
+import sys
 import spacy
 from openai import OpenAI
 import pandas as pd
@@ -71,13 +73,21 @@ note = st.text_area(
 
 run = st.button("🔬 Analyze Note", type="primary", use_container_width=True)
 
-# ── NLP model ─────────────────────────────────────────────────────────────────
-@st.cache_resource
+# ── NLP model — download at runtime if not present ────────────────────────────
+@st.cache_resource(show_spinner="Loading NLP model...")
 def load_nlp_model():
+    model_name = "en_core_web_sm"
     try:
-        return spacy.load("en_core_web_sm")
+        return spacy.load(model_name)
     except OSError:
-        return None
+        try:
+            subprocess.run(
+                [sys.executable, "-m", "spacy", "download", model_name],
+                check=True, capture_output=True
+            )
+            return spacy.load(model_name)
+        except Exception:
+            return None
 
 def extract_entities(text):
     nlp = load_nlp_model()
@@ -109,25 +119,12 @@ def suggest_icd_codes(note_text, api_key):
 
 # ── Label color map ────────────────────────────────────────────────────────────
 LABEL_COLORS = {
-    "PERSON": "#c0392b",
-    "ORG": "#8e44ad",
-    "GPE": "#2980b9",
-    "DATE": "#27ae60",
-    "TIME": "#16a085",
-    "CARDINAL": "#d35400",
-    "QUANTITY": "#f39c12",
-    "NORP": "#1abc9c",
-    "FAC": "#2c3e50",
-    "LOC": "#2ecc71",
-    "PRODUCT": "#e67e22",
-    "EVENT": "#e74c3c",
-    "WORK_OF_ART": "#9b59b6",
-    "LAW": "#34495e",
-    "LANGUAGE": "#1abc9c",
-    "PERCENT": "#f1c40f",
-    "MONEY": "#2ecc71",
-    "ORDINAL": "#95a5a6",
-    "MISC": "#7f8c8d",
+    "PERSON": "#c0392b", "ORG": "#8e44ad", "GPE": "#2980b9",
+    "DATE": "#27ae60", "TIME": "#16a085", "CARDINAL": "#d35400",
+    "QUANTITY": "#f39c12", "NORP": "#1abc9c", "FAC": "#2c3e50",
+    "LOC": "#2ecc71", "PRODUCT": "#e67e22", "EVENT": "#e74c3c",
+    "WORK_OF_ART": "#9b59b6", "LAW": "#34495e", "LANGUAGE": "#1abc9c",
+    "PERCENT": "#f1c40f", "MONEY": "#2ecc71", "ORDINAL": "#95a5a6",
 }
 
 def get_color(label):
@@ -144,7 +141,7 @@ if run and note.strip():
         st.caption(
             "Using spaCy en_core_web_sm to identify and label named entities in clinical text. "
             "In production, a biomedical model (SciSpaCy en_core_sci_lg) would be used for "
-            "richer clinical entity extraction."
+            "richer clinical entity extraction including diseases, drugs, and procedures."
         )
         with st.spinner("Extracting entities..."):
             entities = extract_entities(note)
@@ -177,15 +174,11 @@ if run and note.strip():
 
             st.info(
                 f"✅ Extracted **{len(entities)} entity mentions** from the clinical note. "
-                "In a Cotiviti production pipeline, these entities would be normalized against "
-                "SNOMED CT, RxNorm, and LOINC ontologies and fed into payment accuracy analytics."
+                "In a Cotiviti production pipeline, entities would be normalized against "
+                "SNOMED CT, RxNorm, and LOINC ontologies for downstream payment accuracy analytics."
             )
         else:
-            nlp = load_nlp_model()
-            if nlp is None:
-                st.error("NLP model could not be loaded. Please check deployment logs.")
-            else:
-                st.warning("No entities found. Try loading the sample note.")
+            st.warning("No entities found. Try loading the sample note or entering a more detailed note.")
 
     with tab2:
         st.markdown("### AI-Assisted ICD-10-CM Coding")
@@ -209,7 +202,7 @@ if run and note.strip():
                 "*Justification: Patient is on lisinopril and metformin, indicating active chronic pharmacotherapy.*"
             )
         else:
-            with st.spinner("Consulting LLM for ICD-10 codes... (5–10 seconds)"):
+            with st.spinner("Consulting LLM for ICD-10 codes... (5-10 seconds)"):
                 try:
                     icd_result = suggest_icd_codes(note, openai_key)
                     st.markdown(icd_result)
