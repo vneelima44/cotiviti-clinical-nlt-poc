@@ -1,7 +1,5 @@
 import streamlit as st
-import subprocess
-import sys
-import spacy
+import re
 from openai import OpenAI
 import pandas as pd
 
@@ -26,9 +24,10 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("**Tech Stack**")
     st.markdown(
-        "- spaCy en_core_web_sm (NER)\n"
-        "- OpenAI GPT-3.5-turbo (ICD coding)\n"
-        "- Streamlit (UI)"
+        "- Rule-based NER (regex + keyword matching)\n"
+        "- OpenAI GPT-3.5-turbo (ICD-10 coding)\n"
+        "- Streamlit (UI)\n"
+        "- In production: SciSpaCy biomedical NLP model"
     )
     st.markdown("---")
     st.markdown("**About**")
@@ -57,44 +56,67 @@ SAMPLE_NOTE = (
     "Plan: Emergent PCI, aspirin 325mg, heparin infusion, cardiology consult."
 )
 
-# ── Input ──────────────────────────────────────────────────────────────────────
-st.markdown("### 📋 Clinical Note Input")
-col1, col2 = st.columns([4, 1])
-with col2:
-    if st.button("📄 Load Sample Note", use_container_width=True):
-        st.session_state["note"] = SAMPLE_NOTE
+# ── Clinical entity dictionaries ──────────────────────────────────────────────
+DIAGNOSES = [
+    "hypertension", "diabetes mellitus", "type 2 diabetes", "myocardial infarction",
+    "STEMI", "chest pain", "shortness of breath", "diaphoresis", "ST-elevation",
+    "pneumonia", "atrial fibrillation", "heart failure", "stroke", "sepsis",
+    "COVID-19", "pulmonary embolism", "acute kidney injury", "anemia",
+]
+MEDICATIONS = [
+    "lisinopril", "metformin", "aspirin", "heparin", "warfarin", "insulin",
+    "metoprolol", "atorvastatin", "amlodipine", "furosemide", "prednisone",
+    "amoxicillin", "albuterol", "clopidogrel", "pantoprazole",
+]
+PROCEDURES = [
+    "PCI", "EKG", "echocardiogram", "CT scan", "MRI", "X-ray", "biopsy",
+    "catheterization", "intubation", "dialysis", "colonoscopy", "endoscopy",
+]
+LAB_VALUES = [
+    "troponin", "hemoglobin", "creatinine", "glucose", "BNP", "INR", "TSH",
+    "WBC", "potassium", "sodium", "lactate", "D-dimer", "HbA1c",
+]
 
-note = st.text_area(
-    "Paste or type a de-identified clinical note:",
-    value=st.session_state.get("note", ""),
-    height=180,
-    placeholder="e.g. 67-year-old male with chest pain, hypertension, type 2 diabetes...",
-)
+ENTITY_GROUPS = {
+    "DIAGNOSIS": (DIAGNOSES, "#c0392b"),
+    "MEDICATION": (MEDICATIONS, "#8e44ad"),
+    "PROCEDURE": (PROCEDURES, "#2980b9"),
+    "LAB VALUE": (LAB_VALUES, "#27ae60"),
+}
 
-run = st.button("🔬 Analyze Note", type="primary", use_container_width=True)
+# ── Age pattern ────────────────────────────────────────────────────────────────
+AGE_PATTERN = re.compile(r"\\b(\\d{1,3})[- ]?year[s]?[- ]?old\\b", re.IGNORECASE)
 
-# ── NLP model — download at runtime if not present ────────────────────────────
-@st.cache_resource(show_spinner="Loading NLP model...")
-def load_nlp_model():
-    model_name = "en_core_web_sm"
-    try:
-        return spacy.load(model_name)
-    except OSError:
-        try:
-            subprocess.run(
-                [sys.executable, "-m", "spacy", "download", model_name],
-                check=True, capture_output=True
-            )
-            return spacy.load(model_name)
-        except Exception:
-            return None
+def extract_clinical_entities(text):
+    entities = []
+    text_lower = text.lower()
 
-def extract_entities(text):
-    nlp = load_nlp_model()
-    if nlp is None:
-        return []
-    doc = nlp(text)
-    return [(ent.text, ent.label_, spacy.explain(ent.label_) or ent.label_) for ent in doc.ents]
+    # Age
+    for match in AGE_PATTERN.finditer(text):
+        entities.append((match.group(0), "PATIENT AGE", "#e67e22"))
+
+    # Keyword-based
+    for label, (keywords, color) in ENTITY_GROUPS.items():
+        for kw in keywords:
+            pattern = re.compile(r"\\b" + re.escape(kw) + r"\\b", re.IGNORECASE)
+            for match in pattern.finditer(text):
+                entities.append((match.group(0), label, color))
+
+    # Dosage pattern (e.g. 10mg, 325mg)
+    dose_pattern = re.compile(r"\\b\\d+(?:\\.\\d+)?\\s?(?:mg|mcg|mEq|units?|IU|mL|g)\\b", re.IGNORECASE)
+    for match in dose_pattern.finditer(text):
+        entities.append((match.group(0), "DOSAGE", "#16a085"))
+
+    # Deduplicate by (text, label)
+    seen = set()
+    result = []
+    for ent in entities:
+        key = (ent[0].lower(), ent[1])
+        if key not in seen:
+            seen.add(key)
+            result.append(ent)
+
+    return result
 
 # ── ICD suggestion ─────────────────────────────────────────────────────────────
 def suggest_icd_codes(note_text, api_key):
@@ -117,45 +139,42 @@ def suggest_icd_codes(note_text, api_key):
     )
     return response.choices[0].message.content
 
-# ── Label color map ────────────────────────────────────────────────────────────
-LABEL_COLORS = {
-    "PERSON": "#c0392b", "ORG": "#8e44ad", "GPE": "#2980b9",
-    "DATE": "#27ae60", "TIME": "#16a085", "CARDINAL": "#d35400",
-    "QUANTITY": "#f39c12", "NORP": "#1abc9c", "FAC": "#2c3e50",
-    "LOC": "#2ecc71", "PRODUCT": "#e67e22", "EVENT": "#e74c3c",
-    "WORK_OF_ART": "#9b59b6", "LAW": "#34495e", "LANGUAGE": "#1abc9c",
-    "PERCENT": "#f1c40f", "MONEY": "#2ecc71", "ORDINAL": "#95a5a6",
-}
+# ── Input ──────────────────────────────────────────────────────────────────────
+st.markdown("### 📋 Clinical Note Input")
+col1, col2 = st.columns([4, 1])
+with col2:
+    if st.button("📄 Load Sample Note", use_container_width=True):
+        st.session_state["note"] = SAMPLE_NOTE
 
-def get_color(label):
-    return LABEL_COLORS.get(label, "#1f4e79")
+note = st.text_area(
+    "Paste or type a de-identified clinical note:",
+    value=st.session_state.get("note", ""),
+    height=180,
+    placeholder="e.g. 67-year-old male with chest pain, hypertension, type 2 diabetes...",
+)
+
+run = st.button("🔬 Analyze Note", type="primary", use_container_width=True)
 
 # ── Main output ────────────────────────────────────────────────────────────────
 if run and note.strip():
     tab1, tab2 = st.tabs(
-        ["🔍 Named Entity Recognition (spaCy)", "🏷️ ICD-10 Code Suggestions (LLM)"]
+        ["🔍 Named Entity Recognition", "🏷️ ICD-10 Code Suggestions (LLM)"]
     )
 
     with tab1:
-        st.markdown("### Clinical Named Entity Recognition")
+        st.markdown("### Clinical Named Entity Extraction")
         st.caption(
-            "Using spaCy en_core_web_sm to identify and label named entities in clinical text. "
-            "In production, a biomedical model (SciSpaCy en_core_sci_lg) would be used for "
-            "richer clinical entity extraction including diseases, drugs, and procedures."
+            "Rule-based NER using clinical keyword dictionaries and regex patterns. "
+            "In production, this would use a SciSpaCy biomedical NLP model (en_core_sci_lg) "
+            "for deeper extraction including rare diseases, drug interactions, and anatomical terms."
         )
         with st.spinner("Extracting entities..."):
-            entities = extract_entities(note)
+            entities = extract_clinical_entities(note)
 
         if entities:
-            st.markdown("**Identified Entities:**")
+            st.markdown("**Identified Clinical Entities:**")
             tag_html = ""
-            seen = set()
-            for ent_text, label, explanation in entities:
-                key = (ent_text.lower(), label)
-                if key in seen:
-                    continue
-                seen.add(key)
-                color = get_color(label)
+            for ent_text, label, color in entities:
                 tag_html += (
                     f'<span style="background:{color};color:white;padding:4px 10px;'
                     f'border-radius:14px;margin:3px;display:inline-block;font-size:13px">'
@@ -166,19 +185,16 @@ if run and note.strip():
             st.markdown("")
 
             with st.expander("📊 View as Table"):
-                df = pd.DataFrame(
-                    [(e[0], e[1], e[2]) for e in entities],
-                    columns=["Entity", "Label", "Description"]
-                )
-                st.dataframe(df, use_container_width=True)
+                df = pd.DataFrame(entities, columns=["Entity", "Label", "Color"])
+                st.dataframe(df[["Entity", "Label"]], use_container_width=True)
 
             st.info(
-                f"✅ Extracted **{len(entities)} entity mentions** from the clinical note. "
+                f"✅ Extracted **{len(entities)} clinical entities**. "
                 "In a Cotiviti production pipeline, entities would be normalized against "
                 "SNOMED CT, RxNorm, and LOINC ontologies for downstream payment accuracy analytics."
             )
         else:
-            st.warning("No entities found. Try loading the sample note or entering a more detailed note.")
+            st.warning("No clinical entities found. Try loading the sample note.")
 
     with tab2:
         st.markdown("### AI-Assisted ICD-10-CM Coding")
