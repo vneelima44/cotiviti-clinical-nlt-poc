@@ -1,0 +1,7 @@
+streamlit>=1.32.0
+openai>=1.12.0
+pandas>=2.0.0
+spacy>=3.7.0
+scispacy>=0.5.3
+# SciSpaCy biomedical model - install with:
+# pip install https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.3/en_core_sci_sm-0.5.3.tar.gz
