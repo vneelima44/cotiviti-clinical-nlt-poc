@@ -15,11 +15,11 @@ st.caption("Cotiviti Intern Assessment | Topic 1: Clinical Natural Language Tech
 
 with st.sidebar:
     st.header("Configuration")
-    openai_key = st.text_input("OpenAI API Key", type="password", help="Required for ICD-10 suggestions")
+    groq_key = st.text_input("Groq API Key", type="password", help="Free API key from console.groq.com — required for ICD-10 suggestions")
     st.markdown("---")
     st.markdown("**Tech Stack**")
     st.markdown("- Rule-based clinical NER (keyword + regex)")
-    st.markdown("- OpenAI GPT-3.5-turbo (ICD-10 coding)")
+    st.markdown("- Groq Llama 3.1 (ICD-10 coding) — free tier")
     st.markdown("- Streamlit (UI)")
     st.markdown("---")
     st.markdown("**Cotiviti Services**")
@@ -88,7 +88,7 @@ def extract_clinical_entities(text):
     return result
 
 def suggest_icd_codes(note_text, api_key):
-    client = OpenAI(api_key=api_key)
+    client = OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
     prompt = (
         "You are a certified medical coder (CPC). Given the following clinical note, "
         "identify the most relevant ICD-10-CM diagnosis codes.\n\n"
@@ -100,7 +100,7 @@ def suggest_icd_codes(note_text, api_key):
         f"Clinical Note:\n{note_text}"
     )
     resp = client.chat.completions.create(
-        model="gpt-3.5-turbo",
+        model="llama-3.1-8b-instant",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.1,
         max_tokens=700,
@@ -154,8 +154,8 @@ if run and note.strip():
     with tab2:
         st.markdown("### AI-Assisted ICD-10-CM Coding")
         st.caption("Simulating Cotiviti Coding Validation: LLM suggests codes for human reviewer approval.")
-        if not openai_key:
-            st.warning("Enter your OpenAI API key in the sidebar for live ICD-10 suggestions.")
+        if not groq_key:
+            st.warning("Enter your free Groq API key in the sidebar for live ICD-10 suggestions. Get one at console.groq.com.")
             st.markdown("**Example output:**")
             st.markdown(
                 "**1. I21.19** - ST elevation myocardial infarction (inferior wall)  \n"
@@ -168,7 +168,7 @@ if run and note.strip():
         else:
             with st.spinner("Consulting LLM for ICD-10 codes..."):
                 try:
-                    result = suggest_icd_codes(note, openai_key)
+                    result = suggest_icd_codes(note, groq_key)
                     st.markdown(result)
                     st.success(
                         "**Cotiviti Application:** This output feeds into a human-in-the-loop "
