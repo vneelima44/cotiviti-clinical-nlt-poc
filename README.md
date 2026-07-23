@@ -57,6 +57,6 @@ streamlit run app.py
 
 ## Author
 
-**[Your Name]** | [Your University] | Cotiviti Intern Assessment | June 2026
+**Neelima Verma** | Pace University | Cotiviti Intern Assessment | June 2026
 
 > This application is for demonstration purposes only and is not intended for clinical use.
